@@ -9,6 +9,8 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 // import '../widgets/scan_result_tile.dart';
 // import '../utils/extra.dart';
 
+const CASIO_SERVICE_UUID = "00001804-0000-1000-8000-00805f9b34fb";
+
 class ScanScreen extends StatefulWidget {
   const ScanScreen({Key? key}) : super(key: key);
 
@@ -22,6 +24,8 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isScanning = false;
   late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
   late StreamSubscription<bool> _isScanningSubscription;
+  late StreamSubscription<BluetoothConnectionState>
+      _watchConnectionSubscription;
 
   @override
   void initState() {
@@ -29,6 +33,12 @@ class _ScanScreenState extends State<ScanScreen> {
 
     _scanResultsSubscription = FlutterBluePlus.scanResults.listen((results) {
       _scanResults = results;
+
+      if (results.isNotEmpty) {
+        FlutterBluePlus.stopScan();
+        _connectToWatch(results.last.device);
+      }
+
       if (mounted) {
         setState(() {});
       }
@@ -44,21 +54,40 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
+  void _connectToWatch(BluetoothDevice watch) async {
+    _watchConnectionSubscription = watch.connectionState.listen((state) async {
+      print(
+          "${watch.disconnectReason?.code} ${watch.disconnectReason?.description}");
+    });
+    watch.cancelWhenDisconnected(_watchConnectionSubscription,
+        delayed: true, next: true);
+    await watch.connect();
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   @override
   void dispose() {
     _scanResultsSubscription.cancel();
     _isScanningSubscription.cancel();
+    _watchConnectionSubscription.cancel();
     super.dispose();
   }
 
   Future onScanPressed() async {
     try {
       _systemDevices = await FlutterBluePlus.systemDevices;
+      // _systemDevices.forEach((d) => print(d.advName))
     } catch (e) {
       // Snackbar.show(ABC.b, prettyException("System Devices Error:", e), success: false);
     }
     try {
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
+      await FlutterBluePlus.startScan(
+          // timeout: const Duration(seconds: 15), withKeywords: ["CASIO"]);
+          timeout: const Duration(seconds: 15),
+          withServices: [Guid(CASIO_SERVICE_UUID)]);
     } catch (e) {
       // Snackbar.show(ABC.b, prettyException("Start Scan Error:", e), success: false);
     }
@@ -149,8 +178,8 @@ class _ScanScreenState extends State<ScanScreen> {
           onRefresh: onRefresh,
           child: ListView(
             children: <Widget>[
-              ..._buildSystemDeviceTiles(context),
-              ..._buildScanResultTiles(context),
+              // ..._buildSystemDeviceTiles(context),
+              // ..._buildScanResultTiles(context),
             ],
           ),
         ),
