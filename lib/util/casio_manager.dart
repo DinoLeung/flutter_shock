@@ -1,94 +1,124 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 class CasioManager {
-  // Singleton setup
-  static final CasioManager _instance = CasioManager._();
-  factory CasioManager() => _instance;
-  CasioManager._() {
-    _scanResultsSubscription = FlutterBluePlus.onScanResults
-        .listen(_onScanResultOnData, onError: (e) => print(e));
-    _isScanningSubscription = FlutterBluePlus.isScanning
-        .listen(_isScanningOnData, onError: (e) => print(e));
+	// Singleton setup
+	static final CasioManager _instance = CasioManager._();
+	factory CasioManager() => _instance;
+	CasioManager._() {
+		FlutterBluePlus.setLogLevel(LogLevel.verbose, color: true);
+		FlutterBluePlus.cancelWhenScanComplete(_scanResultsSubscription);
+	}
 
-    FlutterBluePlus.cancelWhenScanComplete(_scanResultsSubscription);
-  }
+	void dispose() {
+		_adapterStateSubscription.cancel();
+		_scanResultsSubscription.cancel();
+		_isScanningSubscription.cancel();
+		_watchConnectionStateSubscription?.cancel();
+	}
 
-  final String CASIO_SERVICE_UUID = "00001804-0000-1000-8000-00805f9b34fb";
+	final String casioServiceUuid = "00001804-0000-1000-8000-00805f9b34fb";
 
-  BluetoothDevice? _connectedWatch;
-  bool get isConnected => _connectedWatch != null;
+	// Bluetooth Adapter state
+	StreamSubscription<BluetoothAdapterState> get _adapterStateSubscription {
+		void onData(BluetoothAdapterState state) async {
+			switch (state) {
+				case BluetoothAdapterState.on:
+					print("We good");
+				case BluetoothAdapterState.off:
+					if (Platform.isAndroid) await FlutterBluePlus.turnOn();
+				case BluetoothAdapterState.unauthorized:
+					print("BT permission deny");
+				case BluetoothAdapterState.unavailable:
+					print("BT hardware is not avilable");
+				default:
+					print("poop");
+			}
+		}
+		return FlutterBluePlus.adapterState
+				.listen(onData, onError: (e) => print(e));
+	}
 
-  // bool get isScanningNow => FlutterBluePlus.isScanningNow;
-  bool _isScanning = false;
+	// Scanning states
+	bool _isScanningNow = false;
+	bool get isScanningNow => _isScanningNow;
+	Stream<bool> get isScanning => _isScanning.stream;
 
-  late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
-  void _onScanResultOnData(List<ScanResult> results) {
-    if (results.isNotEmpty) {
-      FlutterBluePlus.stopScan();
-      connect(results.first.device);
-    }
-  }
+	StreamController<bool> get _isScanning {
+		StreamController<bool> controller = StreamController<bool>();
+		controller.addStream(FlutterBluePlus.isScanning);
+		return controller;
+	}
 
-  late StreamSubscription<bool> _isScanningSubscription;
-  void _isScanningOnData(bool isScanning) => _isScanning = isScanning;
+	StreamSubscription<bool> get _isScanningSubscription {
+		void onData(bool isScanning) {
+			_isScanningNow = isScanning;
+		}
+		return FlutterBluePlus.isScanning.listen(onData, onError: (e) => print(e));
+	}
 
-  // late StreamSubscription<BluetoothConnectionState>
-  //     _watchConnectionStateSubscription;
-  // void watchConnectionStateOnData(BluetoothConnectionState state) {}
+	StreamSubscription<List<ScanResult>> get _scanResultsSubscription {
+		void onData(List<ScanResult> results) async {
+			if (results.isNotEmpty) {
+				await stopScanning();
+				var watch = results.first.device;
+				await connect(watch);
+				_services = await discoverServices(watch);
+			}
+		}
+		return FlutterBluePlus.onScanResults
+				.listen(onData, onError: (e) => print(e));
+	}
+	
+	// Connection States
+	BluetoothDevice? _connectedWatch;
+	BluetoothDevice? get connectedWatch => _connectedWatch;
+	BluetoothConnectionState _connectionStateNow =
+			BluetoothConnectionState.disconnected;
+	BluetoothConnectionState get connectionStateNow => _connectionStateNow;
+	bool get isConnectedNow =>
+			_connectionStateNow == BluetoothConnectionState.connected;
+	final StreamController<bool> _isConnectedController =
+			StreamController<bool>.broadcast();
+	Stream<bool> get isConnected => _isConnectedController.stream;
+	StreamSubscription<BluetoothConnectionState>?
+			_watchConnectionStateSubscription;
+	void _watchConnectionStateOnData(BluetoothConnectionState state) {
+		_connectionStateNow = state;
+		_isConnectedController.add(state == BluetoothConnectionState.connected);
+	}
 
-  // late StreamSubscription<BluetoothAdapterState> _adapterStateSubscription;
-  // void _adapterStateOnData(BluetoothAdapterState state) {
-  //   switch (state) {
-  //     case BluetoothAdapterState.on:
-  //       print("We good");
-  //     default:
-  //       print("poop");
-  //   }
-  // }
+	// Available services from watch, maybe we don't need to expose it publicly.
+	List<BluetoothService>? _services;
+	List<BluetoothService>? get services => _services;
 
-  // Future<BluetoothAdapterState> grantBluetoothPermissions() {
-  //   TODO: Need to listen and handle different bluetooth adapter state
-  //   await FlutterBluePlus.adapterState.listen((BluetoothAdapterState state) {});
-  // }
+	// The connection logic is in _scanResultsSubscription
+	Future<void> scanAndConnect({timeout = const Duration(seconds: 15)}) =>
+			FlutterBluePlus.startScan(
+					timeout: timeout, withServices: [Guid(casioServiceUuid)]);
 
-  Future<void> startScanning({timeout = const Duration(seconds: 15)}) =>
-      FlutterBluePlus.startScan(
-          timeout: timeout, withServices: [Guid(CASIO_SERVICE_UUID)]);
+	Future<void> stopScanning() async => FlutterBluePlus.stopScan();
 
-  Future<void> stopScanning() async {
-    await FlutterBluePlus.stopScan();
-    _scanResultsSubscription.cancel();
-    _isScanningSubscription.cancel();
-    // Just incase the value is not updated immediately
-    _isScanning = false;
-  }
+	Future<void> connect(BluetoothDevice watch) async {
+		try {
+			await watch.connect();
+			_watchConnectionStateSubscription = watch.connectionState
+					.listen(_watchConnectionStateOnData, onError: (e) => print(e));
+			// _connectionStateController.addStream(watch.connectionState);
+			_connectedWatch = watch;
+		} catch (e) {
+			print("Error while connecting: ${e.toString()}");
+		}
+	}
 
-  Future<void> connect(BluetoothDevice watch) async {
-    try {
-      await watch.connect();
-      _connectedWatch = watch;
-    } catch (e) {}
-  }
+	Future<void> disconnect() async {
+		await connectedWatch?.disconnect();
+		_connectedWatch = null;
+		_watchConnectionStateSubscription?.cancel();
+	}
 
-  Future<void> disconnect() async {
-    if (isConnected) {
-      await _connectedWatch!.disconnect();
-      _connectedWatch = null;
-    }
-  }
-
-  // void test() async {
-  //   // let say bluetooth is enabled
-  //   await FlutterBluePlus.adapterState
-  //       .where((state) => state == BluetoothAdapterState.on)
-  //       .first;
-
-  //   var onScanDevicesStream = onScanDevices().listen((devices) {
-  //     if (devices.isNotEmpty) {
-  //       connect(devices.first);
-  //     }
-  //   });
-  // }
+	Future<List<BluetoothService>> discoverServices(BluetoothDevice watch) =>
+			watch.discoverServices();
 }

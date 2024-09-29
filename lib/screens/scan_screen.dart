@@ -1,190 +1,140 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-
-// import 'device_screen.dart';
-// import '../utils/snackbar.dart';
-// import '../widgets/system_device_tile.dart';
-// import '../widgets/scan_result_tile.dart';
-// import '../utils/extra.dart';
+import 'package:flutter_shock/util/casio_manager.dart';
 
 const CASIO_SERVICE_UUID = "00001804-0000-1000-8000-00805f9b34fb";
 
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({Key? key}) : super(key: key);
+	const ScanScreen({Key? key}) : super(key: key);
 
-  @override
-  State<ScanScreen> createState() => _ScanScreenState();
+	@override
+	State<ScanScreen> createState() => _ScanScreenState();
 }
 
 class _ScanScreenState extends State<ScanScreen> {
-  List<BluetoothDevice> _systemDevices = [];
-  List<ScanResult> _scanResults = [];
-  bool _isScanning = false;
-  late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
-  late StreamSubscription<bool> _isScanningSubscription;
-  late StreamSubscription<BluetoothConnectionState>
-      _watchConnectionSubscription;
+	bool _isScanning = false;
+	bool _isConnected = false;
+	Map<String, List<int>> _characteristics = {};
 
-  @override
-  void initState() {
-    super.initState();
+	CasioManager manager = CasioManager();
 
-    _scanResultsSubscription = FlutterBluePlus.scanResults.listen((results) {
-      _scanResults = results;
+	@override
+	void initState() {
+		super.initState();
 
-      if (results.isNotEmpty) {
-        FlutterBluePlus.stopScan();
-        _connectToWatch(results.last.device);
-      }
+		manager.isScanning.listen((isScanning) {
+			_isScanning = isScanning;
+			if (mounted) {
+				setState(() {});
+			}
+		});
 
-      if (mounted) {
-        setState(() {});
-      }
-    }, onError: (e) {
-      // Snackbar.show(ABC.b, prettyException("Scan Error:", e), success: false);
-    });
+		manager.isConnected.listen((isConnected) {
+			_isConnected = isConnected;
+			if (isConnected && manager.services != null) {
+				print("HERE");
+				manager.services!.forEach((service) {
+					service.characteristics.forEach((c) async {
+						if (c.properties.read) {
+							List<int> value = await c.read();
+							print("${c.characteristicUuid}: ${value}");
+							_characteristics.addAll({c.characteristicUuid.toString(): value});
+						}
+					});
+				});
+			} else {
+				_characteristics.clear();
+			}
+			if (mounted) {
+				setState(() {});
+			}
+		});
+	}
 
-    _isScanningSubscription = FlutterBluePlus.isScanning.listen((state) {
-      _isScanning = state;
-      if (mounted) {
-        setState(() {});
-      }
-    });
-  }
+	@override
+	void dispose() {
+		manager.dispose();
+		super.dispose();
+	}
 
-  void _connectToWatch(BluetoothDevice watch) async {
-    _watchConnectionSubscription = watch.connectionState.listen((state) async {
-      print(
-          "${watch.disconnectReason?.code} ${watch.disconnectReason?.description}");
-    });
-    watch.cancelWhenDisconnected(_watchConnectionSubscription,
-        delayed: true, next: true);
-    await watch.connect();
+	Future onScanPressed() async {
+		await manager.scanAndConnect();
 
-    if (mounted) {
-      setState(() {});
-    }
-  }
+		if (mounted) {
+			setState(() {});
+		}
+	}
 
-  @override
-  void dispose() {
-    _scanResultsSubscription.cancel();
-    _isScanningSubscription.cancel();
-    _watchConnectionSubscription.cancel();
-    super.dispose();
-  }
+	Future onDisconnectPressed() async {
+		await manager.disconnect();
 
-  Future onScanPressed() async {
-    try {
-      _systemDevices = await FlutterBluePlus.systemDevices;
-      // _systemDevices.forEach((d) => print(d.advName))
-    } catch (e) {
-      // Snackbar.show(ABC.b, prettyException("System Devices Error:", e), success: false);
-    }
-    try {
-      await FlutterBluePlus.startScan(
-          // timeout: const Duration(seconds: 15), withKeywords: ["CASIO"]);
-          timeout: const Duration(seconds: 15),
-          withServices: [Guid(CASIO_SERVICE_UUID)]);
-    } catch (e) {
-      // Snackbar.show(ABC.b, prettyException("Start Scan Error:", e), success: false);
-    }
-    if (mounted) {
-      setState(() {});
-    }
-  }
+		if (mounted) {
+			setState(() {});
+		}
+	}
 
-  Future onStopPressed() async {
-    try {
-      FlutterBluePlus.stopScan();
-    } catch (e) {
-      // Snackbar.show(ABC.b, prettyException("Stop Scan Error:", e), success: false);
-    }
-  }
+	Future onStopPressed() async {
+		try {
+			await manager.stopScanning();
+		} catch (e) {
+			// Snackbar.show(ABC.b, prettyException("Stop Scan Error:", e), success: false);
+		}
+		if (mounted) {
+			setState(() {});
+		}
+	}
 
-  void onConnectPressed(BluetoothDevice device) {
-    // device.connectAndUpdateStream().catchError((e) {
-    //   Snackbar.show(ABC.c, prettyException("Connect Error:", e), success: false);
-    // });
-    // MaterialPageRoute route = MaterialPageRoute(
-    //     builder: (context) => DeviceScreen(device: device), settings: RouteSettings(name: '/DeviceScreen'));
-    // Navigator.of(context).push(route);
-  }
+	Widget buildScanButton(BuildContext context) {
+		// if (FlutterBluePlus.isScanningNow) {
+		if (_isScanning) {
+			return FloatingActionButton(
+				child: const Icon(Icons.stop),
+				onPressed: onStopPressed,
+				backgroundColor: Colors.red,
+			);
+		} else if (_isConnected) {
+			return FloatingActionButton(
+					child: const Text("DISCONNECT"),
+					onPressed: onDisconnectPressed,
+					backgroundColor: Colors.blue);
+		} else {
+			return FloatingActionButton(
+					child: const Text("SCAN"), onPressed: onScanPressed);
+		}
+	}
 
-  Future onRefresh() {
-    if (_isScanning == false) {
-      FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
-    }
-    if (mounted) {
-      setState(() {});
-    }
-    return Future.delayed(Duration(milliseconds: 500));
-  }
+	Widget buildBody(BuildContext context) {
+		return Text("isScanning: ${_isScanning}, isConnected: ${_isConnected}");
+	}
 
-  Widget buildScanButton(BuildContext context) {
-    if (FlutterBluePlus.isScanningNow) {
-      return FloatingActionButton(
-        child: const Icon(Icons.stop),
-        onPressed: onStopPressed,
-        backgroundColor: Colors.red,
-      );
-    } else {
-      return FloatingActionButton(
-          child: const Text("SCAN"), onPressed: onScanPressed);
-    }
-  }
+	Widget buildList(BuildContext context) {
+		return ListView(
+				children: _characteristics.keys
+						.map((key) => Text("${key}: ${_characteristics[key]}"))
+						.toList());
+	}
 
-  List<Widget> _buildSystemDeviceTiles(BuildContext context) {
-    // return _systemDevices
-    //     .map(
-    //       (d) => SystemDeviceTile(
-    //         device: d,
-    //         onOpen: () => Navigator.of(context).push(
-    //           MaterialPageRoute(
-    //             builder: (context) => DeviceScreen(device: d),
-    //             settings: RouteSettings(name: '/DeviceScreen'),
-    //           ),
-    //         ),
-    //         onConnect: () => onConnectPressed(d),
-    //       ),
-    //     )
-    //     .toList();
-    return _systemDevices.map((d) => Text(d.advName)).toList();
-  }
-
-  List<Widget> _buildScanResultTiles(BuildContext context) {
-    // return _scanResults
-    //     .map(
-    //       (r) => ScanResultTile(
-    //         result: r,
-    //         onTap: () => onConnectPressed(r.device),
-    //       ),
-    //     )
-    //     .toList();
-    return _scanResults.map((r) => Text(r.device.advName)).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaffoldMessenger(
-      // key: Snackbar.snackBarKeyB,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Find Devices'),
-        ),
-        body: RefreshIndicator(
-          onRefresh: onRefresh,
-          child: ListView(
-            children: <Widget>[
-              // ..._buildSystemDeviceTiles(context),
-              // ..._buildScanResultTiles(context),
-            ],
-          ),
-        ),
-        floatingActionButton: buildScanButton(context),
-      ),
-    );
-  }
+	@override
+	Widget build(BuildContext context) {
+		return ScaffoldMessenger(
+			// key: Snackbar.snackBarKeyB,
+			child: Scaffold(
+				appBar: AppBar(
+					title: const Text('Find Devices'),
+				),
+				body: buildList(context),
+				// body: RefreshIndicator(
+				//   onRefresh: onRefresh,
+				//   child: ListView(
+				//     children: <Widget>[
+				//       // ..._buildSystemDeviceTiles(context),
+				//       // ..._buildScanResultTiles(context),
+				//     ],
+				//   ),
+				// ),
+				floatingActionButton: buildScanButton(context),
+			),
+		);
+	}
 }
