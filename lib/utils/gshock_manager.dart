@@ -19,6 +19,7 @@ class GShockManager {
 
     _isScanningStreamController.close();
     _connectedWatchStreamController.close();
+    _watchServicesStreamController.close();
     _connectionStateStreamController.close();
   }
 
@@ -27,10 +28,10 @@ class GShockManager {
   void _initSubscriptions() {
     _adapterStateSubscription = FlutterBluePlus.adapterState
         .listen(_onAdapterStateChange, onError: (e) => print(e));
-        
+
     _scanResultsSubscription = FlutterBluePlus.onScanResults
         .listen(_onScanResultsChange, onError: (e) => print(e));
-    FlutterBluePlus.cancelWhenScanComplete(_scanResultsSubscription);
+    // FlutterBluePlus.cancelWhenScanComplete(_scanResultsSubscription);
 
     _isScanningStreamController.addStream(FlutterBluePlus.isScanning);
   }
@@ -55,7 +56,6 @@ class GShockManager {
       await stopScanning();
       var watch = results.first.device;
       await connect(watch);
-      // _services = await discoverServices(watch);
     }
   }
 
@@ -73,12 +73,20 @@ class GShockManager {
   Stream<BluetoothDevice?> get connectedWatchStream =>
       _connectedWatchStreamController.stream;
 
+  final StreamController<List<BluetoothService>>
+      _watchServicesStreamController = StreamController.broadcast();
+  Stream<List<BluetoothService>> get watchServicesStream =>
+      _watchServicesStreamController.stream;
+
   BluetoothDevice? _connectedWatch;
   BluetoothDevice? get connectedWatch => _connectedWatch;
   void _setConnectedWatch(BluetoothDevice? watch) {
     _connectedWatch = watch;
     _connectedWatchStreamController.add(watch);
   }
+
+  List<BluetoothService> get watchServices =>
+      _connectedWatch?.servicesList ?? [];
 
   // Connection States
   final StreamController<BluetoothConnectionState>
@@ -113,6 +121,7 @@ class GShockManager {
   Future<void> connect(BluetoothDevice watch) async {
     try {
       await watch.connect();
+      await discoverServices(watch);
       _watchConnectionStateSubscription = watch.connectionState
           .listen(_watchConnectionStateOnData, onError: (e) => print(e));
       _setConnectedWatch(watch);
@@ -124,9 +133,12 @@ class GShockManager {
   Future<void> disconnect() async {
     await connectedWatch?.disconnect();
     _connectedWatch = null;
-    _watchConnectionStateSubscription?.cancel();
+    // _watchConnectionStateSubscription?.cancel();
   }
 
-  Future<List<BluetoothService>> discoverServices(BluetoothDevice watch) =>
-      watch.discoverServices();
+  Future<List<BluetoothService>> discoverServices(BluetoothDevice watch) async {
+    var services = await watch.discoverServices();
+    _watchServicesStreamController.add(watch.servicesList);
+    return services;
+  }
 }
