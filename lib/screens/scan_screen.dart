@@ -15,6 +15,7 @@ class ScanScreen extends StatefulWidget {
 
 class _ScanScreenState extends State<ScanScreen> {
   BluetoothDevice? _watch = null;
+  List<BluetoothService> _services = [];
   bool _isScanning = false;
   bool _isConnected = false;
   Map<String, List<int>> _characteristics = {};
@@ -25,36 +26,50 @@ class _ScanScreenState extends State<ScanScreen> {
   void initState() {
     super.initState();
 
-    manager.connectedWatchStream.listen((watch) {
+    manager.connection.connectedWatchStream.listen((watch) {
       _watch = watch;
+      if (watch != null) {
+        print("Connected");
+        // print(watch.servicesList);
+      }
       if (mounted) {
         setState(() {});
       }
     });
 
-    manager.isScanningStream.listen((isScanning) {
+    manager.connection.watchServicesStream.listen((services) {
+      _services = services;
+      services.forEach((service) {
+        // print(service);
+      });
+      if (mounted) {
+        setState(() {});
+      }
+    });
+
+    manager.connection.isScanningStream.listen((isScanning) {
       _isScanning = isScanning;
       if (mounted) {
         setState(() {});
       }
     });
 
-    manager.connectionStateStream.listen((status) async {
+    manager.connection.connectionStateStream.listen((status) async {
       _isConnected = status == BluetoothConnectionState.connected;
-      if (_isConnected && manager.connectedWatch != null) {
-        var services = await manager.discoverServices(manager.connectedWatch!);
-        services.forEach((service) {
-          service.characteristics.forEach((c) async {
-            if (c.properties.read) {
-              List<int> value = await c.read();
-              print("${c.characteristicUuid}: ${value}");
-              _characteristics.addAll({c.characteristicUuid.toString(): value});
-            }
-          });
-        });
-      } else {
-        _characteristics.clear();
-      }
+      // if (_isConnected && manager.connectedWatch != null) {
+      //   var services = await manager.discoverServices(manager.connectedWatch!);
+      //   services.forEach((service) {
+      //     service.characteristics.forEach((c) async {
+      //       if (c.properties.read) {
+      //         List<int> value = await c.read();
+      //         print("${c.characteristicUuid}: ${value}");
+      //         _characteristics.addAll({c.characteristicUuid.toString(): value});
+      //       }
+      //     });
+      //   });
+      // } else {
+      //   _characteristics.clear();
+      // }
       if (mounted) {
         setState(() {});
       }
@@ -68,7 +83,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future onScanPressed() async {
-    await manager.scanAndConnect();
+    await manager.connection.scanAndConnect();
 
     if (mounted) {
       setState(() {});
@@ -85,7 +100,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future onStopPressed() async {
     try {
-      await manager.stopScanning();
+      await manager.connection.stopScanning();
     } catch (e) {
       // Snackbar.show(ABC.b, prettyException("Stop Scan Error:", e), success: false);
     }
@@ -114,13 +129,22 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget buildBody(BuildContext context) {
+    // return Center(
+    //   child: Column(
+    //     children: [
+    //       Text("isScanning: ${_isScanning}, isConnected: ${_isConnected}"),
+    //       buildList(context)
+    //     ],
+    //   )
+    // );
     return Text("isScanning: ${_isScanning}, isConnected: ${_isConnected}");
   }
 
   Widget buildList(BuildContext context) {
     return ListView(
-        children: _characteristics.keys
-            .map((key) => Text("${key}: ${_characteristics[key]}"))
+        children: _services
+            .map((service) => Text(
+                "${service.serviceUuid.toString()}: ${service.isPrimary ? "Primary" : "Not Primary"}"))
             .toList());
   }
 
@@ -132,7 +156,7 @@ class _ScanScreenState extends State<ScanScreen> {
         appBar: AppBar(
           title: const Text('Find Devices'),
         ),
-        body: buildList(context),
+        body: buildBody(context),
         // body: RefreshIndicator(
         //   onRefresh: onRefresh,
         //   child: ListView(
